@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess Analyzer Pro</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <script>eruda.init();</script>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+    <script src="https://unpkg.com/chess.js@0.10.3/chess.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        :root {
+            --bg-dark: #312e2b;
+            --bg-panel: #262421;
+            --text-main: #ffffff;
+            --text-muted: #8b8987;
+            --chess-green: #81b64c;
+            --chess-green-hover: #98d15f;
+            --blunder-red: #fa412d;
+            --mistake-orange: #ffa415;
+            --inaccuracy-yellow: #f0c15c;
+            --best-green: #95bb4a;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .view { display: none; }
+        .view.active { display: block; }
+        .hidden { display: none !important; }
+
+        textarea {
+            width: 100%;
+            max-width: 600px;
+            height: 200px;
+            background: var(--bg-panel);
+            color: var(--text-main);
+            border: 1px solid #403d39;
+            padding: 10px;
+            border-radius: 5px;
+            resize: vertical;
+        }
+
+        .settings-panel {
+            margin-top: 15px;
+            background: var(--bg-panel);
+            padding: 15px;
+            border-radius: 5px;
+            max-width: 600px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        button {
+            background-color: var(--chess-green);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: background-color 0.2s ease;
+        }
+        button:disabled { background-color: var(--text-muted); cursor: not-allowed; }
+        button:hover:not(:disabled) { background-color: var(--chess-green-hover); }
+        .error { color: var(--blunder-red); margin-top: 10px; font-weight: bold; }
+
+        .progress-bar-container {
+            width: 100%;
+            max-width: 400px;
+            background: var(--bg-panel);
+            border-radius: 10px;
+            height: 22px;
+            overflow: hidden;
+            margin-bottom: 10px;
+            border: 1px solid #403d39;
+        }
+        
+        #progress-bar {
+            height: 100%;
+            width: 0%;
+            background-color: var(--chess-green);
+            background-image: linear-gradient(
+                45deg,
+                rgba(255, 255, 255, 0.15) 25%,
+                transparent 25%,
+                transparent 50%,
+                rgba(255, 255, 255, 0.15) 50%,
+                rgba(255, 255, 255, 0.15) 75%,
+                transparent 75%,
+                transparent
+            );
+            background-size: 1rem 1rem;
+            transition: width 0.2s ease;
+            animation: progress-animation 1s linear infinite;
+        }
+
+        @keyframes progress-animation {
+            from { background-position: 1rem 0; }
+            to { background-position: 0 0; }
+        }
+
+        .layout-grid {
+            display: flex;
+            gap: 30px;
+            max-width: 1200px;
+            margin: 0 auto;
+            flex-wrap: wrap;
+        }
+
+        .board-section { flex: 1; min-width: 300px; max-width: 500px; }
+        .info-section { flex: 1; display: flex; flex-direction: column; gap: 20px; min-width: 300px; }
+
+        .metrics-card {
+            display: flex;
+            justify-content: space-around;
+            background: var(--bg-panel);
+            padding: 15px;
+            border-radius: 5px;
+        }
+        
+        .chart-container {
+            background: var(--bg-panel);
+            padding: 10px;
+            border-radius: 5px;
+            height: 200px;
+        }
+
+        .move-list-container {
+            background: var(--bg-panel);
+            border-radius: 5px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+        }
+        .move-row { display: flex; border-bottom: 1px solid #403d39; }
+        .move-clickable { flex: 1; padding: 5px; cursor: pointer; transition: background 0.2s; }
+        .move-clickable:hover { background: #3d3935; border-radius: 3px; }
+        .move-quality { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-left: 5px; vertical-align: middle; }
+
+        .q-best { background-color: var(--best-green); }
+        .q-good { background-color: var(--chess-green); }
+        .q-inaccuracy { background-color: var(--inaccuracy-yellow); }
+        .q-mistake { background-color: var(--mistake-orange); }
+        .q-blunder { background-color: var(--blunder-red); }
+
+        #puzzle-mode {
+            background: var(--bg-panel);
+            border: 2px solid var(--blunder-red);
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="lobby-view" class="view active">
+        <h1>Analyze Your Game</h1>
+        <textarea id="pgn-input" placeholder="Paste your PGN here..."></textarea>
+        
+        <div class="settings-panel">
+            <label style="font-weight: bold;">Analysis Depth:</label>
+            <input type="range" id="depth-slider" min="8" max="18" value="12" step="1" oninput="document.getElementById('depth-value').innerText = this.value;">
+            <span id="depth-value" style="font-weight: bold; color: var(--chess-green);">12</span>
+        </div>
+        
+        <button id="start-analysis-btn">Analyze Game</button>
+        <div id="error-message" class="error hidden"></div>
+    </div>
+
+    <div id="loading-view" class="view hidden">
+        <h2>Stockfish is analyzing...</h2>
+        <div class="progress-bar-container">
+            <div id="progress-bar"></div>
+        </div>
+        <p id="progress-text">0 / 0 moves analyzed</p>
+        <button id="cancel-analysis-btn" style="background-color: var(--blunder-red);">Cancel Analysis</button>
+    </div>
+
+    <div id="analysis-view" class="view hidden">
+        <div class="layout-grid">
+            
+            <div class="board-section">
+                <div id="board"></div>
+                <div id="puzzle-mode" class="hidden">
+                    <h3 style="color: var(--blunder-red); margin-top: 0;">Find the Better Move!</h3>
+                    <p>You played a blunder here. Can you find what Stockfish recommended?</p>
+                    <button id="cancel-puzzle-btn" style="background-color: var(--bg-dark);">Cancel Puzzle</button>
+                    <div id="puzzle-feedback" style="font-weight: bold; margin-top: 10px; min-height: 20px;"></div>
+                </div>
+                <button id="new-game-btn">Analyze New Game</button>
+            </div>
+
+            <div class="info-section">
+                <div class="metrics-card">
+                    <div class="player-stats">
+                        <h3 style="margin-top: 0;">White</h3>
+                        <p>Accuracy: <span id="white-acc">0</span>%</p>
+                        <p>Est. ELO: <span id="white-elo">0</span></p>
+                    </div>
+                    <div class="player-stats">
+                        <h3 style="margin-top: 0;">Black</h3>
+                        <p>Accuracy: <span id="black-acc">0</span>%</p>
+                        <p>Est. ELO: <span id="black-elo">0</span></p>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="eval-chart"></canvas>
+                </div>
+
+                <div class="move-list-container">
+                    <div id="move-list"></div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+
+    <script>
+        let board = null;
+        let game = null;
+        let engine = null;
+        let chartInstance = null;
+        let isPuzzleMode = false;
+        let cancelAnalysis = false;
+        
+        let analysisData = {
+            moves: [],
+            evals: [],
+            cpl: { w: [], b: [] },
+            worstBlunder: null
+        };
+
+        const switchView = (viewId) => {
+            $('.view').removeClass('active');
+            $(`#${viewId}`).addClass('active');
+        };
+
+        const showError = (message) => {
+            $('#error-message').text(message).removeClass('hidden');
+            $('#start-analysis-btn').text('Analyze Game').prop('disabled', false);
+        };
+
+        const resetApplication = () => {
+            cancelAnalysis = true; 
+            if (engine) {
+                engine.terminate();
+                engine = null;
+            }
+            if (board) {
+                board.destroy();
+                $('#board').empty(); 
+                board = null;
+            }
+            if (chartInstance) {
+                chartInstance.destroy();
+                chartInstance = null;
+            }
+            
+            $('#pgn-input').val('');
+            $('#progress-bar').css('width', '0%');
+            $('#puzzle-mode').addClass('hidden');
+            $('#start-analysis-btn').text('Analyze Game').prop('disabled', false);
+            $('#error-message').addClass('hidden');
+            isPuzzleMode = false;
+            
+            switchView('lobby-view');
+        };
+
+        $('#new-game-btn').on('click', resetApplication);
+        $('#cancel-analysis-btn').on('click', resetApplication);
+
+        // --- SAFE ENGINE INITIALIZATION ---
+        function initEngine() {
+            try {
+                // The "./" forces it to look securely in the exact same folder
+                engine = new Worker('./stockfish.js');
+            } catch (e) {
+                console.error("Worker Error:", e);
+                return Promise.reject("File path error: Browser could not find ./stockfish.js");
+            }
+            
+            engine.postMessage('uci');
+            engine.postMessage('setoption name MultiPV value 1');
+            
+            return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject("Engine timed out. Ensure stockfish.wasm.js and stockfish.wasm are uploaded.");
+                }, 5000);
+
+                const handler = (e) => {
+                    if (e.data === 'readyok' || e.data === 'uciok') {
+                        clearTimeout(timeout);
+                        engine.removeEventListener('message', handler);
+                        resolve();
+                    }
+                };
+                engine.addEventListener('message', handler);
+                engine.postMessage('isready');
+            });
+        }
+
+        function getEval(fen, depth) {
+            return new Promise((resolve) => {
+                let currentCp = 0;
+                let bestMoveFound = null;
+                
+                const timeout = setTimeout(() => {
+                    engine.removeEventListener('message', handler);
+                    resolve({ bestMove: bestMoveFound, score: currentCp }); 
+                }, 10000); 
+                
+                function handler(e) {
+                    const msg = e.data;
+                    
+                    if (msg.includes('score cp')) {
+                        const match = msg.match(/score cp (-?\d+)/);
+                        if(match) currentCp = parseInt(match[1], 10);
+                    } else if (msg.includes('score mate')) {
+                        const match = msg.match(/score mate (-?\d+)/);
+                        if(match) {
+                            const movesToMate = parseInt(match[1], 10);
+                            currentCp = movesToMate > 0 ? 10000 - movesToMate : -10000 - movesToMate;
+                        }
+                    }
+                    
+                    if (msg.includes('bestmove')) {
+                        clearTimeout(timeout);
+                        engine.removeEventListener('message', handler);
+                        const bestMoveMatch = msg.match(/bestmove (\S+)/);
+                        bestMoveFound = bestMoveMatch ? bestMoveMatch[1] : null;
+                        resolve({ bestMove: bestMoveFound, score: currentCp });
+                    }
+                }
+                
+                engine.addEventListener('message', handler);
+                engine.postMessage(`position fen ${fen}`);
+                engine.postMessage(`go depth ${depth}`);
+            });
+        }
+
+        $('#start-analysis-btn').on('click', async () => {
+            if (typeof Chess === 'undefined') {
+                return showError("Error: The chess rules library failed to load.");
+            }
+
+            const pgn = $('#pgn-input').val().trim();
+            if (!pgn) return showError("Please paste a PGN string.");
+
+            game = new Chess();
+            const loadSuccess = game.load_pgn(pgn, { sloppy: true }); 
+            
+            if (!loadSuccess || game.history().length === 0) {
+                return showError("Invalid or unsupported PGN format.");
+            }
+            
+            $('#error-message').addClass('hidden');
+            $('#start-analysis-btn').text('Loading Engine...').prop('disabled', true);
+            
+            cancelAnalysis = false;
+            
+            try {
+                await initEngine();
+            } catch (err) {
+                return showError(err);
+            }
+
+            if (cancelAnalysis) return;
+            switchView('loading-view');
+            
+            const history = game.history({ verbose: true });
+            let tempGame = new Chess();
+            
+            analysisData = { moves: history, evals: [0], cpl: { w: [], b: [] }, worstBlunder: null };
+            let highestCpl = 0;
+            const analysisDepth = parseInt($('#depth-slider').val());
+
+            try {
+                let previousEvalData = await getEval(tempGame.fen(), analysisDepth);
+
+                for (let i = 0; i < history.length; i++) {
+                    if (cancelAnalysis) break;
+
+                    const progress = Math.round((i / history.length) * 100);
+                    $('#progress-bar').css('width', `${progress}%`);
+                    $('#progress-text').text(`${i + 1} / ${history.length} moves analyzed`);
+
+                    const playerTurn = tempGame.turn();
+                    const beforeData = previousEvalData;
+                    
+                    let absoluteWhiteEval = playerTurn === 'w' ? beforeData.score : -beforeData.score;
+                    analysisData.evals.push(absoluteWhiteEval / 100); 
+
+                    tempGame.move(history[i].san);
+                    
+                    const afterData = await getEval(tempGame.fen(), analysisDepth);
+                    
+                    const beforeScore = beforeData.score;
+                    const afterScore = afterData.score;
+                    let cpl = 0;
+                    
+                    if (history[i].color === 'w') {
+                        cpl = Math.max(0, beforeScore - afterScore);
+                    } else {
+                        cpl = Math.max(0, -beforeScore + afterScore);
+                    }
+                    cpl = Math.min(cpl, 1000); 
+                    
+                    analysisData.cpl[history[i].color].push(cpl);
+
+                    let quality = 'best';
+                    if (cpl > 200) quality = 'blunder';
+                    else if (cpl > 100) quality = 'mistake';
+                    else if (cpl > 40) quality = 'inaccuracy';
+                    else if (cpl > 15) quality = 'good';
+
+                    history[i].quality = quality;
+                    history[i].cpl = cpl;
+
+                    if (cpl > 150 && cpl > highestCpl && beforeData.bestMove) {
+                        highestCpl = cpl;
+                        tempGame.undo(); 
+                        analysisData.worstBlunder = {
+                            fen: tempGame.fen(),
+                            player: playerTurn,
+                            engineBest: beforeData.bestMove 
+                        };
+                        tempGame.move(history[i].san); 
+                    }
+
+                    previousEvalData = afterData;
+                }
+            } catch (error) {
+                console.error("Analysis error:", error);
+                if (!cancelAnalysis) showError("An error occurred during analysis.");
+            }
+
+            if (!cancelAnalysis) renderDashboard();
+        });
+
+        // --- MATH REFINEMENTS ---
+        const estimateElo = (acc) => {
+            if (acc >= 95) return 2500;
+            if (acc >= 92) return 2200;
+            if (acc >= 88) return 1900;
+            if (acc >= 82) return 1600;
+            if (acc >= 75) return 1300;
+            return 800;
+        };
+
+        function renderDashboard() {
+            switchView('analysis-view');
+
+            const calcAcc = (cplArr) => {
+                if(cplArr.length === 0) return 100;
+                const avgCpl = cplArr.reduce((a,b) => a+b, 0) / cplArr.length;
+                const accuracy = 100 * Math.exp(-0.005 * avgCpl); 
+                return Math.max(0, Math.round(accuracy));
+            };
+
+            const wAcc = calcAcc(analysisData.cpl.w);
+            const bAcc = calcAcc(analysisData.cpl.b);
+            
+            $('#white-acc').text(wAcc);
+            $('#black-acc').text(bAcc);
+            $('#white-elo').text(estimateElo(wAcc));
+            $('#black-elo').text(estimateElo(bAcc));
+
+            if (board) {
+                board.destroy();
+                $('#board').empty();
+            }
+            
+            board = Chessboard('board', {
+                position: game.fen(),
+                orientation: 'white',
+                pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+            });
+
+            let moveHtml = '';
+            for(let i = 0; i < analysisData.moves.length; i += 2) {
+                const wMove = analysisData.moves[i];
+                const bMove = analysisData.moves[i+1];
+                
+                moveHtml += `<div class="move-row">
+                    <span style="width: 30px; color: var(--text-muted); padding: 5px 0;">${(i/2)+1}.</span>
+                    <span class="move-clickable" data-move="${i}">${wMove.san} <div class="move-quality q-${wMove.quality}" title="${wMove.quality} (CPL: ${wMove.cpl})"></div></span>
+                    <span class="move-clickable" data-move="${i+1}">${bMove ? bMove.san + `<div class="move-quality q-${bMove.quality}" title="${bMove.quality} (CPL: ${bMove.cpl})"></div>` : ''}</span>
+                </div>`;
+            }
+            $('#move-list').html(moveHtml);
+
+            $('.move-clickable').on('click', function() {
+                const idx = parseInt($(this).data('move'));
+                if (isNaN(idx)) return;
+                
+                const temp = new Chess();
+                for(let k = 0; k <= idx; k++) {
+                    temp.move(analysisData.moves[k].san);
+                }
+                board.position(temp.fen());
+                
+                $('.move-clickable').css('background', 'transparent');
+                $(this).css('background', '#3d3935').css('border-radius', '3px');
+            });
+
+            if (chartInstance) chartInstance.destroy();
+            const ctx = document.getElementById('eval-chart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: analysisData.evals.length}, (_, i) => i),
+                    datasets: [{
+                        label: 'White Advantage',
+                        data: analysisData.evals,
+                        borderColor: '#81b64c',
+                        backgroundColor: 'rgba(129, 182, 76, 0.2)', 
+                        fill: true,
+                        stepped: false,
+                        tension: 0.3
+                    }]
+                },
+                options: { 
+                    maintainAspectRatio: false, 
+                    scales: { 
+                        y: { min: -10, max: 10 },
+                        x: { display: false } 
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+
+            if (analysisData.worstBlunder && analysisData.worstBlunder.engineBest) {
+                initPuzzleMode();
+            }
+        }
+
+        function initPuzzleMode() {
+            $('#puzzle-mode').removeClass('hidden');
+            $('#puzzle-feedback').text('');
+            isPuzzleMode = true;
+            
+            let puzzleGame = new Chess(analysisData.worstBlunder.fen);
+            
+            if (board) {
+                board.destroy();
+                $('#board').empty();
+            }
+
+            board = Chessboard('board', {
+                position: puzzleGame.fen(),
+                draggable: true,
+                orientation: analysisData.worstBlunder.player === 'w' ? 'white' : 'black',
+                pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+                onDrop: function(source, target) {
+                    let moveUci = source + target;
+                    
+                    if ((source[1] === '7' && target[1] === '8') || (source[1] === '2' && target[1] === '1')) {
+                        moveUci += 'q'; 
+                    }
+
+                    if (moveUci === analysisData.worstBlunder.engineBest) {
+                        $('#puzzle-feedback').css('color', 'var(--best-green)').text("Correct! That's the engine's best move.");
+                        setTimeout(() => {
+                            $('#puzzle-mode').addClass('hidden');
+                            isPuzzleMode = false;
+                            
+                            board.destroy();
+                            $('#board').empty();
+                            board = Chessboard('board', {
+                                position: game.fen(),
+                                orientation: 'white',
+                                pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+                            });
+                            
+                            $('#puzzle-feedback').text('');
+                        }, 2000);
+                    } else {
+                        $('#puzzle-feedback').css('color', 'var(--blunder-red)').text("Incorrect. Try again!");
+                        return 'snapback';
+                    }
+                }
+            });
+        }
+
+        $('#cancel-puzzle-btn').on('click', () => {
+            $('#puzzle-mode').addClass('hidden');
+            isPuzzleMode = false;
+            
+            board.destroy();
+            $('#board').empty();
+            board = Chessboard('board', {
+                position: game.fen(),
+                orientation: 'white',
+                pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+            });
+        });
+    </script>
+</body>
+</html>
